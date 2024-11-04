@@ -36,7 +36,7 @@ impl Encoder {
         if let Some(encoder_options) = encoder_options {
             for (key, value) in encoder_options.iter() {
                 info!("Setting option {key} {value}");
-                unsafe { Self::set_option(encoder.as_mut_ptr(), &key, &value)? };
+                unsafe { Self::set_option(encoder.as_mut_ptr(), key, value)? };
             }
         }
 
@@ -73,6 +73,6 @@ impl Encoder {
     }
 
     pub fn dimensions(&self) -> (u32, u32) {
-        return self.dimensions;
+        self.dimensions
     }
 }

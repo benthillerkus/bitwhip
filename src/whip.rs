@@ -20,7 +20,7 @@ pub async fn publish(
 
     let mut client = Client::new().await.unwrap();
     client
-        .send_whip_request(&publish_url, &token, RtcDirection::SendOnly)
+        .send_whip_request(publish_url, &token, RtcDirection::SendOnly)
         .await
         .expect("should connect");
 
@@ -71,10 +71,7 @@ pub async fn decode_recv_loop(mut client: Client, tx: mpsc::Sender<ffmpeg_next::
                 }
                 WebrtcEvent::Media(media) => {
                     // Decoder failures may happen, ignore them
-                    match decoder.send_packet(&ffmpeg_next::Packet::borrow(&media.data)) {
-                        Err(_) => continue,
-                        Ok(_) => {}
-                    };
+                    if decoder.send_packet(&ffmpeg_next::Packet::borrow(&media.data)).is_err() { continue };
 
                     let mut frame = ffmpeg_next::frame::Video::empty();
                     while decoder.receive_frame(&mut frame).is_ok() {
@@ -101,7 +98,7 @@ pub async fn subscribe_as_client(
 ) {
     let mut client = Client::new().await.unwrap();
     client
-        .send_whip_request(&publish_url, &token, RtcDirection::RecvOnly)
+        .send_whip_request(publish_url, &token, RtcDirection::RecvOnly)
         .await
         .expect("should connect");
 

@@ -27,14 +27,14 @@ pub static NvOptimusEnablement: i32 = 1;
 pub static AmdPowerXpressRequestHighPerformance: i32 = 1;
 
 fn create_encoder(width: u32, height: u32, hw_frames: *mut AVBufferRef) -> Result<Encoder> {
-    let encoder = Encoder::new(
+    Encoder::new(
         "h264_nvenc",
         Some(HashMap::from([
             ("preset".into(), "p6".into()),
             ("tune".into(), "ull".into()),
         ])),
         |encoder| {
-            let frame_rate = Rational::new(60, 1);
+            let frame_rate = Rational::new(30, 1);
             encoder.set_bit_rate(5000 * 1000);
             encoder.set_width(width);
             encoder.set_height(height);
@@ -42,17 +42,18 @@ fn create_encoder(width: u32, height: u32, hw_frames: *mut AVBufferRef) -> Resul
             encoder.set_frame_rate(Some(frame_rate));
             encoder.set_gop(120);
             encoder.set_max_b_frames(0);
-            encoder.set_format(Pixel::D3D11);
-            unsafe {
-                let encoder = &mut *encoder.as_mut_ptr();
-                encoder.hw_frames_ctx = av_buffer_ref(hw_frames);
-            }
+            encoder.set_format(Pixel::YUV420P);
+            let span = tracing::debug_span!("Setting hw_frames_ctx");
+            span.in_scope(|| 
+                unsafe {
+                    let encoder = &mut *encoder.as_mut_ptr();
+                    encoder.hw_frames_ctx = hw_frames;
+                }
+            );
 
             Ok(())
         },
-    )?;
-
-    Ok(encoder)
+    )
 }
 
 #[derive(Parser)]
@@ -127,7 +128,8 @@ async fn stream(url: String, token: Option<String>) -> Result<()> {
     let join_handle = tokio::task::spawn_blocking(move || -> Result<()> {
         let mut encoder: Option<Encoder> = None;
         let mut source: Box<dyn Source + Send + Sync> =
-            Box::new(source::dxdup::DisplayDuplicator::new()?);
+            Box::new(source::static_image::ImageFile::new()?);
+            // Box::new(source::dxdup::DisplayDuplicator::new()?);
 
         let ensure_encoder = |encoder: &mut Option<Encoder>,
                               width: u32,
@@ -148,20 +150,30 @@ async fn stream(url: String, token: Option<String>) -> Result<()> {
         loop {
             // Pull frame from duplicator
             let frame = source.get_frame()?;
-            let hw_frames = unsafe { (*frame.as_ptr()).hw_frames_ctx };
+            tracing::debug!("Got frame");
+            let hw_frames: *mut AVBufferRef = unsafe { (*frame.as_ptr()).hw_frames_ctx };
             // Fetch encoder or create it
             ensure_encoder(&mut encoder, frame.width(), frame.height(), hw_frames)?;
+            tracing::debug!("Got Encoder");
             if let Some(encoder) = &mut encoder {
                 // Encode frame
+                tracing::debug!("Encoding frame");
                 if let Some(packet) = encoder.encode(&frame)? {
+                    tracing::debug!("Sending frame");
                     tx.send(EncodedPacket(packet, start)).unwrap();
                 }
+            } else {
+                tracing::error!("No encoder");
             }
         }
     });
 
-    whip::publish(&url, token, rx).await;
-    join_handle.await??;
+    tokio::select! {
+        _ = whip::publish(&url, token, rx) => {},
+        res = join_handle => {
+            res??
+        }
+    }
 
     Ok(())
 }
